@@ -1,0 +1,92 @@
+# Project: samesame
+
+## Description
+A development tool designed to identify repeated fragments of code across multiple code files.
+
+## Technical Stack
+- **Language**: Rust 2024 edition
+- **Run environment**: command line application using multiprocessing
+- **Crates**: rayon (for multiprocessing), clap (for command line processing), serde/serde_json (for JSON output), glob (for file discovery)
+
+## Project Structure
+This repository will use a Cargo workspace with a single crate.
+```
+.
+├── Cargo.toml
+├── src
+│   └── main.rs
+└── tests
+```
+
+## Testing Strategy
+- **Unit tests**: Test component logic and prop handling
+- **Integration tests**: wasm-bindgen-test for rendering and interactions
+
+## Documentation
+- Rustdoc comments for all traits and structs
+
+## Command line options
+- MatchLength
+`-m <int>` or `--match <int>`: the cutoff for number of lines that can match before they are reported as being of interest. Default: 5.- file 1 and file 2 
+
+## Development Workflow
+1. Implement Tier 1 components sequentially to establish patterns
+2. Parallelize Tier 2+ implementation once patterns are established
+
+## Success Metrics
+- Complete code coverage in tests
+- Published at v1.0.0 on crates.io
+
+## Technical Implementation Details
+
+### Algorithm
+The code will implement a patience diff algorithm to identify runs of identical code.
+1. The FileDesription of each file is created. FileDescription structs are const after being made.
+2. Take two files and calculate the initial LineRange objects:
+- While the lines at the start of each file are the same, create a LineRange of type Same.
+- While the lines at the end of each file are the same, create a LineRange of type Same.
+Put each LineRange into the `LineRanges.runs`
+3. Calculate the rest of the LineRange objects:
+- While there are lines that are not accounted for in each file, add the longest LineRange
+- If the only lines not accounted for are in one file, make a Diff LineRange that captures these lines in its file and an empty LineRange for the other file.
+
+### Program output
+The program should iterate over the `LineRange.runs` and identify the LineRanges that are the same, particularly those more than a chosen limit.
+
+
+#### Enums
+A single range of identical or different lines of code will be captured by a LineRange enum:
+``` rust
+pub struct Range {
+    start u32,
+    end u32,
+}
+
+pub enum LineRange {
+    Same(Range r1, Range r2),
+    Diff(Range r1, Range r2),
+}
+```
+
+`r1` is the start and end index positions of a line range in the first file's `FileDescription.hashes` vector.
+`r2` is the start and end index positions of a line range in the second file's `FileDescription.hashes` vector.
+
+#### Structs
+1. FileDescription
+Each file will have a struct with these fields:
+``` rust
+struct FileDescription {
+    String filename,
+    Vector<Hash> hashes, # hashes of lines of code 
+}
+```
+
+2. LineRanges
+Differences and similarities between files will be tracked using LineRanges:
+``` rust
+struct LineRanges {
+    FileDescription& f1,
+    FileDescription& f2,
+    Vector<LineRange> runs,
+}
+```

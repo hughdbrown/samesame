@@ -1,0 +1,491 @@
+
+╭─── Claude Code v2.1.3 ───────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Hugh!                 │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ Recent activity         │
+│                        ▘▘ ▝▝                       │ No recent activity      │
+│                                                    │                         │
+│   Opus 4.5 · Claude Max · hughdbrown@gmail.com's   │                         │
+│   Organization                                     │                         │
+│        ~/workspace/hughdbrown/rust/samesame        │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+❯ It looks like the matching has stopped working since we added the regex   
+  prefix code.                                                              
+  Now matches look like this:                                               
+  ```                                                                       
+  ---                                                                       
+                                                                            
+  Files: adw_plan_build_test_review_iso.py <-> adw_sdlc_zte_iso.py          
+  Match: 40 lines (adw_plan_build_test_review_iso.py:57-96,                 
+  adw_sdlc_zte_iso.py:85-124)                                               
+                                                                            
+  ---                                                                       
+                                                                            
+  Files: adw_sdlc_iso.py <-> adw_sdlc_zte_iso.py                            
+  Match: 48 lines (adw_sdlc_iso.py:60-107, adw_sdlc_zte_iso.py:85-132)      
+                                                                            
+  ---                                                                       
+  ...                                                                       
+  ```                                                                       
+  There are evidently matches to show and there is no regex match required, 
+  but it fails to report any matching LOCs.                                 
+
+⏺ Let me investigate the issue. I'll start by looking at the code that handles the regex prefix and the match output.
+
+⏺ Explore(Explore regex prefix code)
+  ⎿  Done (10 tool uses · 28.2k tokens · 24s)                              
+
+⏺ Let me look at the actual output formatting code to understand the issue better.
+
+⏺ Read(src/output.rs)
+  ⎿  Read 240 lines
+
+⏺ The output you showed actually looks correct - it's showing matches with 40 lines and 48 lines. Let me check the CLI handling to understand what you're expecting vs what's happening.
+
+⏺ Read(src/cli.rs)
+  ⎿  Read 77 lines
+
+⏺ Read(src/main.rs)
+  ⎿  Read 116 lines
+
+⏺ Looking at the output you showed, it actually appears to be working - matches are being displayed (40 lines, 48 lines). Let me compile and test the code to see what's happening.
+
+⏺ Bash(cargo build 2>&1)
+  ⎿     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+
+
+⏺ Bash(cargo test 2>&1)
+  ⎿     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02
+    s
+         Running unittests src/lib.rs (target/debug/deps/samesame-6299ddd71
+    … +193 lines (ctrl+o to expand)
+
+
+
+⏺ All 124 tests pass. Let me create some test files with duplicate code to see the actual output.
+
+⏺ Bash(mkdir -p /tmp/samesame_test && cd /tmp/samesame_test && cat > file1.py <<
+       'EOF'
+      # file1.py…)
+  ⎿ Shell cwd was reset to                                                 
+    /Users/hughbrown/workspace/hughdbrown/rust/samesame
+
+⏺ Bash(cargo run -- /tmp/samesame_test/file1.py /tmp/samesame_test/file2.py -m 3
+       2>&1)
+  ⎿  Error: Exit code 1
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+          Running `target/debug/samesame /tmp/samesame_test/file1.py 
+     /tmp/samesame_test/file2.py -m 3`
+     Found 2 files to analyze
+     Loaded 2 text files
+     Comparing 1 file pairs
+     === Duplicate Code Found ===
+
+     Files: /tmp/samesame_test/file1.py <-> /tmp/samesame_test/file2.py
+     Match: 4 lines (file1.py:3-6, file2.py:3-6)
+     … +9 lines (ctrl+o to see all)
+
+⏺ The output looks correct - it shows the header, matches, and summary. Let me also test with the -v verbose flag and with a regex filter.
+
+⏺ Bash(cargo run -- /tmp/samesame_test/file1.py /tmp/samesame_test/file2.py -m 3
+       -v 2>&1)
+  ⎿  Error: Exit code 1
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+          Running `target/debug/samesame /tmp/samesame_test/file1.py 
+     /tmp/samesame_test/file2.py -m 3 -v`
+     Found 2 files to analyze
+     Loaded 2 text files
+     Comparing 1 file pairs
+     === Duplicate Code Found ===
+
+     Files: /tmp/samesame_test/file1.py <-> /tmp/samesame_test/file2.py
+     Match: 4 lines (file1.py:3-6, file2.py:3-6)
+     … +20 lines (ctrl+o to see all)
+
+⏺ Bash(cargo run -- /tmp/samesame_test/file1.py /tmp/samesame_test/file2.py -m 3
+       -r "def" 2>&1)
+  ⎿  Error: Exit code 1
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+          Running `target/debug/samesame /tmp/samesame_test/file1.py 
+     /tmp/samesame_test/file2.py -m 3 -r def`
+     Found 2 files to analyze
+     Loaded 2 text files
+     Comparing 1 file pairs
+     No duplicate code found.
+
+⏺ I see! Looking at these test results:
+
+  1. Without -v: Shows match headers and line ranges (e.g., "Match: 4 lines")
+  2. With -v: Shows the actual code lines
+  3. With -r def: Filters matches where the first line doesn't contain "def"
+
+  The output you showed is actually correct for non-verbose mode. The "Match: 40 lines" is reporting the LOCs - it found 40 matching lines at those line ranges.
+
+  However, I notice your output is missing the header "=== Duplicate Code Found ===" and the Summary line at the end. Let me check if you're possibly using the regex filter inadvertently or if there's another issue.
+
+  Could you clarify:
+
+  1. Are you running with -r or --regex flag? (even accidentally in an alias or script)
+  2. Are you expecting to see the actual code content of the matching lines? That requires the -v flag
+  3. Is the full output missing the "=== Duplicate Code Found ===" header and the "Summary: ..." line at the end?
+
+  If you want to see the actual matching code lines (not just the count), run with -v:
+
+  samesame -d /path/to/dir -g "*.py" -m 5 -v
+
+✻ Crunched for 2m 24s
+
+❯ show me the help output for samesame 
+
+⏺ Bash(cargo run -- --help 2>&1)
+  ⎿     Compiling proc-macro2 v1.0.105 
+        Compiling unicode-ident v1.0.22
+        Compiling quote v1.0.43
+     … +92 lines (ctrl+o to expand)
+
+⏺ Here's the help output. Key options:
+  ┌───────────────┬───────────────────────────────────────────────────────────┐
+  │     Flag      │                        Description                        │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -m, --match   │ Minimum matching lines to report (default: 5)             │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -d, --dir     │ Directory to scan for files                               │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -g, --glob    │ Glob pattern for file matching (default: **/*.rs)         │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -f, --format  │ Output format: text or json                               │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -v, --verbose │ Show the actual matching code lines                       │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -q, --quiet   │ Suppress warnings                                         │
+  ├───────────────┼───────────────────────────────────────────────────────────┤
+  │ -r, --regex   │ Only show matches where the first line matches this regex │
+  └───────────────┴───────────────────────────────────────────────────────────┘
+  So if you want to see the actual duplicate code content (not just the line counts/ranges), use -v:
+
+  samesame -d /path/to/dir -g "*.py" -v
+
+❯ For this command line:                                                    
+  >>>>>                                                                     
+  I get this output:                                                        
+  > Found 2 files to analyze                                                
+  Loaded 2 text files                                                       
+  Comparing 1 file pairs                                                    
+  === Duplicate Code Found ===                                              
+                                                                            
+  Files: src/discovery.rs <-> src/main.rs                                   
+  Match: 5 lines (discovery.rs:40-44, main.rs:64-68)                        
+                                                                            
+  ---                                                                       
+                                                                            
+  Summary: 2 files analyzed, 1 pairs compared, 1 duplicate regions (5       
+  lines)                                                                    
+  <<<<<                                                                     
+                                                                            
+  ``` src/discovery.rs                                                      
+  //! File discovery and filtering.                                         
+                                                                            
+  use std::path::{Path, PathBuf};                                           
+                                                                            
+  use glob::glob;                                                           
+                                                                            
+  use crate::error::{Result, SameError};                                    
+                                                                            
+  /// Discover files from explicit paths and/or directory scanning.         
+  pub fn discover_files(                                                    
+  explicit_files: &[String],                                                
+  directory: Option<&str>,                                                  
+  glob_pattern: &str,                                                       
+  ) -> Result<Vec<PathBuf>> {                                               
+  let mut files = Vec::new();                                               
+                                                                            
+  // Add explicit file paths                                                
+  for path in explicit_files {                                              
+  let path = PathBuf::from(path);                                           
+  if path.is_file() && !is_symlink(&path) {                                 
+  files.push(path);                                                         
+  }                                                                         
+  }                                                                         
+                                                                            
+  // Scan directory with glob pattern                                       
+  if let Some(dir) = directory {                                            
+  let pattern = format!("{}/{}", dir.trim_end_matches('/'),                 
+  glob_pattern);                                                            
+  let discovered = scan_glob(&pattern)?;                                    
+  files.extend(discovered);                                                 
+  }                                                                         
+                                                                            
+  // If no directory specified but no explicit files either, scan           
+  current directory                                                         
+  if directory.is_none() && explicit_files.is_empty() {                     
+  let discovered = scan_glob(glob_pattern)?;                                
+  files.extend(discovered);                                                 
+  }                                                                         
+                                                                            
+  // Remove duplicates while preserving order                               
+  files = deduplicate_paths(files);                                         
+                                                                            
+  if files.is_empty() {                                                     
+  return Err(SameError::NoFilesFound);                                      
+  }                                                                         
+                                                                            
+  Ok(files)                                                                 
+  }                                                                         
+                                                                            
+  /// Scan using a glob pattern.                                            
+  #[doc(hidden)]                                                            
+  pub fn scan_glob(pattern: &str) -> Result<Vec<PathBuf>> {                 
+  let entries = glob(pattern).map_err(|e| SameError::InvalidGlob {          
+  pattern: pattern.to_string(),                                             
+  message: e.msg.to_string(),                                               
+  })?;                                                                      
+                                                                            
+  let mut files = Vec::new();                                               
+                                                                            
+  for entry in entries {                                                    
+  match entry {                                                             
+  Ok(path) => {                                                             
+  // Skip symlinks, directories, and hidden files                           
+  if path.is_file() && !is_symlink(&path) &&                                
+  !is_hidden(&path) {                                                       
+  files.push(path);                                                         
+  }                                                                         
+  }                                                                         
+  Err(_) => {                                                               
+  // Skip entries we can't read                                             
+  continue;                                                                 
+  }                                                                         
+  }                                                                         
+  }                                                                         
+                                                                            
+  Ok(files)                                                                 
+  }                                                                         
+                                                                            
+  /// Check if a path is a symlink.                                         
+  #[doc(hidden)]                                                            
+  pub fn is_symlink(path: &Path) -> bool {                                  
+  path.symlink_metadata()                                                   
+  .map(|m| m.file_type().is_symlink())                                      
+  .unwrap_or(false)                                                         
+  }                                                                         
+                                                                            
+  /// Check if a path is hidden (starts with .).                            
+  #[doc(hidden)]                                                            
+  pub fn is_hidden(path: &Path) -> bool {                                   
+  path.file_name()                                                          
+  .and_then(|n| n.to_str())                                                 
+  .map(|n| n.starts_with('.'))                                              
+  .unwrap_or(false)                                                         
+  }                                                                         
+                                                                            
+  /// Remove duplicate paths, keeping first occurrence.                     
+  #[doc(hidden)]                                                            
+  pub fn deduplicate_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {           
+  let mut seen = std::collections::HashSet::new();                          
+  let mut result = Vec::with_capacity(paths.len());                         
+                                                                            
+  for path in paths {                                                       
+  // Canonicalize to handle relative vs absolute paths                      
+  let canonical = path.canonicalize().unwrap_or_else(|_|                    
+  path.clone());                                                            
+  if seen.insert(canonical) {                                               
+  result.push(path);                                                        
+  }                                                                         
+  }                                                                         
+                                                                            
+  result                                                                    
+  }                                                                         
+                                                                            
+  /// Generate all unique pairs of indices (i, j) where i < j.              
+  pub fn generate_pairs(count: usize) -> Vec<(usize, usize)> {              
+  if count < 2 {                                                            
+  return Vec::new();                                                        
+  }                                                                         
+                                                                            
+  let mut pairs = Vec::with_capacity(count * (count - 1) / 2);              
+                                                                            
+  for i in 0..count {                                                       
+  for j in (i + 1)..count {                                                 
+  pairs.push((i, j));                                                       
+  }                                                                         
+  }                                                                         
+                                                                            
+  pairs                                                                     
+  }                                                                         
+                                                                            
+  ```                                                                       
+                                                                            
+  ``` src/main.rs                                                           
+  //! samesame - A tool to identify repeated fragments of code across       
+  multiple files.                                                           
+                                                                            
+  use std::process::ExitCode;                                               
+                                                                            
+  use rayon::prelude::*;                                                    
+                                                                            
+  use samesame::cli::{Args, OutputFormat};                                  
+  use samesame::diff::compare_files;                                        
+  use samesame::discovery::{discover_files, generate_pairs};                
+  use samesame::error::SameError;                                           
+  use samesame::file::read_file_if_text;                                    
+  use samesame::output::{format_json, format_text};                         
+  use samesame::types::{ComparisonResult, FileDescription};                 
+                                                                            
+  fn main() -> ExitCode {                                                   
+  let args = Args::parse_args();                                            
+                                                                            
+  match run(&args) {                                                        
+  Ok(has_duplicates) => {                                                   
+  if has_duplicates {                                                       
+  ExitCode::from(1)                                                         
+  } else {                                                                  
+  ExitCode::SUCCESS                                                         
+  }                                                                         
+  }                                                                         
+  Err(e) => {                                                               
+  eprintln!("Error: {}", e);                                                
+  ExitCode::from(2)                                                         
+  }                                                                         
+  }                                                                         
+  }                                                                         
+                                                                            
+  fn run(args: &Args) -> Result<bool, SameError> {                          
+  // Discover files                                                         
+  let paths = discover_files(                                               
+  &args.files,                                                              
+  args.directory.as_deref(),                                                
+  &args.glob_pattern,                                                       
+  )?;                                                                       
+                                                                            
+  if !args.quiet {                                                          
+  eprintln!("Found {} files to analyze", paths.len());                      
+  }                                                                         
+                                                                            
+  // Read files in parallel, filtering out binary and empty files           
+  let files: Vec<FileDescription> = paths                                   
+  .par_iter()                                                               
+  .filter_map(|path| {                                                      
+  match read_file_if_text(path) {                                           
+  Ok(Some(desc)) => Some(desc),                                             
+  Ok(None) => {                                                             
+  // Binary or empty file - skip silently                                   
+  None                                                                      
+  }                                                                         
+  Err(e) => {                                                               
+  if !args.quiet {                                                          
+  eprintln!("Warning: {}", e);                                              
+  }                                                                         
+  None                                                                      
+  }                                                                         
+  }                                                                         
+  })                                                                        
+  .collect();                                                               
+                                                                            
+  if files.is_empty() {                                                     
+  return Err(SameError::NoFilesFound);                                      
+  }                                                                         
+                                                                            
+  if !args.quiet {                                                          
+  eprintln!("Loaded {} text files", files.len());                           
+  }                                                                         
+                                                                            
+  // Generate pairs for comparison                                          
+  let pairs = generate_pairs(files.len());                                  
+  let pairs_count = pairs.len();                                            
+                                                                            
+  if !args.quiet {                                                          
+  eprintln!("Comparing {} file pairs", pairs_count);                        
+  }                                                                         
+                                                                            
+  // Compare pairs in parallel                                              
+  let results: Vec<ComparisonResult<'_>> = pairs                            
+  .par_iter()                                                               
+  .map(|&(i, j)| compare_files(&files[i], &files[j]))                       
+  .collect();                                                               
+                                                                            
+  // Check if any duplicates found                                          
+  let has_duplicates = results                                              
+  .iter()                                                                   
+  .any(|r| r.has_significant_matches(args.min_match));                      
+                                                                            
+  // Format and print output                                                
+  let output = match args.format {                                          
+  OutputFormat::Text => format_text(                                        
+  &results,                                                                 
+  args.min_match,                                                           
+  args.verbose,                                                             
+  files.len(),                                                              
+  pairs_count,                                                              
+  args.regex.as_ref(),                                                      
+  ),                                                                        
+  OutputFormat::Json => format_json(                                        
+  &results,                                                                 
+  args.min_match,                                                           
+  args.verbose,                                                             
+  files.len(),                                                              
+  pairs_count,                                                              
+  args.regex.as_ref(),                                                      
+  ),                                                                        
+  };                                                                        
+                                                                            
+  println!("{}", output);                                                   
+                                                                            
+  Ok(has_duplicates)                                                        
+  }                                                                         
+                                                                            
+  ```                                                                       
+
+⏺ I see the issue now. Let me run this with -v to see what lines are actually being reported as matching.
+
+⏺ Bash(cargo run -- src/discovery.rs src/main.rs -v 2>&1)
+  ⎿  Error: Exit code 1
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+          Running `target/debug/samesame src/discovery.rs src/main.rs -v`
+     Found 2 files to analyze
+     Loaded 2 text files
+     Comparing 1 file pairs
+     === Duplicate Code Found ===
+
+     Files: src/discovery.rs <-> src/main.rs
+     Match: 5 lines (discovery.rs:40-44, main.rs:64-68)
+     … +10 lines (ctrl+o to see all)
+
+⏺ The output looks correct to me. Let me verify by checking the actual line content:
+
+  discovery.rs lines 40-44:
+  - Line 40: (blank)
+  - Line 41:     if files.is_empty() {
+  - Line 42:         return Err(SameError::NoFilesFound);
+  - Line 43:     }
+  - Line 44: (blank)
+
+  main.rs lines 64-68:
+  - Line 64: (blank)
+  - Line 65:     if files.is_empty() {
+  - Line 66:         return Err(SameError::NoFilesFound);
+  - Line 67:     }
+  - Line 68: (blank)
+
+  These 5 lines match exactly between the two files. The verbose output confirms this:
+
+      40 |   64 |
+      41 |   65 |     if files.is_empty() {
+      42 |   66 |         return Err(SameError::NoFilesFound);
+      43 |   67 |     }
+      44 |   68 |
+
+  The tool is working correctly. What specific issue were you seeing with your Python files? Your earlier output also looked correct:
+
+  Match: 40 lines (adw_plan_build_test_review_iso.py:57-96, ...)
+
+  This means 40 lines matched at those ranges. If you want to see the actual code content of those matches, add -v:
+
+  samesame -d /path -g "*.py" -v
+
+✻ Cooked for 1m 14s
+
+
+
