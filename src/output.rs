@@ -1,6 +1,5 @@
 //! Output formatting for duplicate detection results.
 
-use regex::Regex;
 use serde::Serialize;
 
 use crate::types::{ComparisonResult, LineRange, Range};
@@ -57,20 +56,6 @@ pub struct JsonOutput {
     pub duplicates: Vec<DuplicateInfo>,
 }
 
-/// Check if a match's first line matches the regex filter.
-fn matches_regex_filter(result: &ComparisonResult<'_>, r1: &Range, regex: Option<&Regex>) -> bool {
-    match regex {
-        None => true, // No filter, include all matches
-        Some(re) => {
-            if r1.start < result.f1.lines.len() {
-                re.is_match(&result.f1.lines[r1.start])
-            } else {
-                false
-            }
-        }
-    }
-}
-
 /// Format results as human-readable text.
 pub fn format_text(
     results: &[ComparisonResult<'_>],
@@ -78,7 +63,6 @@ pub fn format_text(
     verbose: bool,
     files_count: usize,
     pairs_count: usize,
-    regex: Option<&Regex>,
 ) -> String {
     let mut output = String::new();
 
@@ -102,11 +86,6 @@ pub fn format_text(
 
         for m in &matches {
             if let LineRange::Same { r1, r2 } = m {
-                // Apply regex filter
-                if !matches_regex_filter(result, r1, regex) {
-                    continue;
-                }
-
                 total_duplicate_lines += r1.len();
                 total_matches += 1;
 
@@ -174,7 +153,6 @@ pub fn format_json(
     verbose: bool,
     files_count: usize,
     pairs_count: usize,
-    regex: Option<&Regex>,
 ) -> String {
     let mut duplicates = Vec::new();
     let mut total_duplicate_lines = 0usize;
@@ -190,11 +168,6 @@ pub fn format_json(
             .iter()
             .filter_map(|m| {
                 if let LineRange::Same { r1, r2 } = m {
-                    // Apply regex filter
-                    if !matches_regex_filter(result, r1, regex) {
-                        return None;
-                    }
-
                     total_duplicate_lines += r1.len();
 
                     let content = if verbose {

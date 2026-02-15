@@ -62,7 +62,7 @@ fn test_format_text_no_duplicates() {
         }],
     };
 
-    let output = format_text(&[result], 5, false, 2, 1, None);
+    let output = format_text(&[result], 5, false, 2, 1);
     assert!(output.contains("No duplicate code found"));
 }
 
@@ -78,7 +78,7 @@ fn test_format_text_with_duplicates() {
         }],
     };
 
-    let output = format_text(&[result], 3, false, 2, 1, None);
+    let output = format_text(&[result], 3, false, 2, 1);
     assert!(output.contains("Duplicate Code Found"));
     assert!(output.contains("file1.rs"));
     assert!(output.contains("file2.rs"));
@@ -98,7 +98,7 @@ fn test_format_text_verbose() {
         }],
     };
 
-    let output = format_text(&[result], 3, true, 2, 1, None);
+    let output = format_text(&[result], 3, true, 2, 1);
     assert!(output.contains("fn main()"));
     assert!(output.contains("println!"));
 }
@@ -116,7 +116,7 @@ fn test_format_text_below_threshold() {
     };
 
     // Threshold is 5, but match is only 3 lines
-    let output = format_text(&[result], 5, false, 2, 1, None);
+    let output = format_text(&[result], 5, false, 2, 1);
     assert!(output.contains("No duplicate code found"));
 }
 
@@ -132,7 +132,7 @@ fn test_format_json_no_duplicates() {
         }],
     };
 
-    let output = format_json(&[result], 5, false, 2, 1, None);
+    let output = format_json(&[result], 5, false, 2, 1);
     assert!(output.contains("\"duplicates_found\": 0"));
     assert!(output.contains("\"duplicates\": []"));
 }
@@ -149,7 +149,7 @@ fn test_format_json_with_duplicates() {
         }],
     };
 
-    let output = format_json(&[result], 3, false, 2, 1, None);
+    let output = format_json(&[result], 3, false, 2, 1);
     assert!(output.contains("\"duplicates_found\": 1"));
     assert!(output.contains("\"file1\": \"src/file1.rs\""));
     assert!(output.contains("\"file2\": \"src/file2.rs\""));
@@ -168,7 +168,7 @@ fn test_format_json_verbose_includes_content() {
         }],
     };
 
-    let output = format_json(&[result], 3, true, 2, 1, None);
+    let output = format_json(&[result], 3, true, 2, 1);
     assert!(output.contains("\"content\":"));
     assert!(output.contains("fn main()"));
 }
@@ -185,7 +185,7 @@ fn test_format_json_not_verbose_no_content() {
         }],
     };
 
-    let output = format_json(&[result], 3, false, 2, 1, None);
+    let output = format_json(&[result], 3, false, 2, 1);
     // content field should be skipped when None
     assert!(!output.contains("\"content\":"));
 }
@@ -202,7 +202,7 @@ fn test_format_json_structure() {
         }],
     };
 
-    let output = format_json(&[result], 3, false, 2, 1, None);
+    let output = format_json(&[result], 3, false, 2, 1);
 
     // Parse as JSON to verify structure
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -248,7 +248,7 @@ fn test_format_text_multiple_results() {
         }],
     };
 
-    let output = format_text(&[result1, result2], 3, false, 3, 3, None);
+    let output = format_text(&[result1, result2], 3, false, 3, 3);
     assert!(output.contains("a.rs"));
     assert!(output.contains("b.rs"));
     assert!(output.contains("c.rs"));
@@ -277,7 +277,7 @@ fn test_format_json_multiple_matches_same_pair() {
         ],
     };
 
-    let output = format_json(&[result], 2, false, 2, 1, None);
+    let output = format_json(&[result], 2, false, 2, 1);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
     // Should have 2 matches in the matches array
@@ -319,10 +319,25 @@ fn make_mixed_files() -> (FileDescription, FileDescription) {
     (f1, f2)
 }
 
+/// Apply regex filtering to a ComparisonResult, retaining only Same runs
+/// whose first line matches the regex (mirrors main.rs filter_runs_by_regex).
+fn filter_by_regex(result: &mut ComparisonResult<'_>, regex: &Regex) {
+    result.runs.retain(|run| match run {
+        LineRange::Same { r1, .. } => {
+            if r1.start < result.f1.lines.len() {
+                regex.is_match(&result.f1.lines[r1.start])
+            } else {
+                false
+            }
+        }
+        LineRange::Diff { .. } => true,
+    });
+}
+
 #[test]
 fn test_format_text_regex_filters_matches() {
     let (f1, f2) = make_mixed_files();
-    let result = ComparisonResult {
+    let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![
@@ -345,7 +360,8 @@ fn test_format_text_regex_filters_matches() {
 
     // Filter to only show matches starting with "def"
     let regex = Regex::new(r"^def ").unwrap();
-    let output = format_text(&[result], 3, false, 2, 1, Some(&regex));
+    filter_by_regex(&mut result, &regex);
+    let output = format_text(&[result], 3, false, 2, 1);
 
     assert!(output.contains("Duplicate Code Found"));
     assert!(output.contains("3 lines"));
@@ -356,7 +372,7 @@ fn test_format_text_regex_filters_matches() {
 #[test]
 fn test_format_text_regex_filters_all() {
     let (f1, f2) = make_mixed_files();
-    let result = ComparisonResult {
+    let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![
@@ -369,7 +385,8 @@ fn test_format_text_regex_filters_all() {
 
     // Filter to only show matches starting with "def" (but match starts with "class")
     let regex = Regex::new(r"^def ").unwrap();
-    let output = format_text(&[result], 3, false, 2, 1, Some(&regex));
+    filter_by_regex(&mut result, &regex);
+    let output = format_text(&[result], 3, false, 2, 1);
 
     // Should show "No duplicate code found" because regex filters out all matches
     assert!(output.contains("No duplicate code found"));
@@ -378,7 +395,7 @@ fn test_format_text_regex_filters_all() {
 #[test]
 fn test_format_json_regex_filters_matches() {
     let (f1, f2) = make_mixed_files();
-    let result = ComparisonResult {
+    let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![
@@ -399,7 +416,8 @@ fn test_format_json_regex_filters_matches() {
 
     // Filter to only show matches starting with "class"
     let regex = Regex::new(r"^class ").unwrap();
-    let output = format_json(&[result], 3, false, 2, 1, Some(&regex));
+    filter_by_regex(&mut result, &regex);
+    let output = format_json(&[result], 3, false, 2, 1);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
     // Should only have 1 match (the class match)
@@ -413,7 +431,7 @@ fn test_format_json_regex_filters_matches() {
 #[test]
 fn test_format_json_regex_filters_all() {
     let (f1, f2) = make_mixed_files();
-    let result = ComparisonResult {
+    let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![
@@ -426,7 +444,8 @@ fn test_format_json_regex_filters_all() {
 
     // Filter with regex that matches nothing
     let regex = Regex::new(r"^struct ").unwrap();
-    let output = format_json(&[result], 3, false, 2, 1, Some(&regex));
+    filter_by_regex(&mut result, &regex);
+    let output = format_json(&[result], 3, false, 2, 1);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
     // Should have no duplicates
@@ -437,7 +456,7 @@ fn test_format_json_regex_filters_all() {
 #[test]
 fn test_format_text_regex_verbose_shows_content() {
     let (f1, f2) = make_mixed_files();
-    let result = ComparisonResult {
+    let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![
@@ -449,7 +468,8 @@ fn test_format_text_regex_verbose_shows_content() {
     };
 
     let regex = Regex::new(r"^def ").unwrap();
-    let output = format_text(&[result], 3, true, 2, 1, Some(&regex));
+    filter_by_regex(&mut result, &regex);
+    let output = format_text(&[result], 3, true, 2, 1);
 
     assert!(output.contains("def hello():"));
     assert!(output.contains("print(\"Hello\")"));

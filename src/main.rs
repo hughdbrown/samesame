@@ -4,13 +4,15 @@ use std::process::ExitCode;
 
 use rayon::prelude::*;
 
+use regex::Regex;
+
 use samesame::cli::{Args, OutputFormat};
 use samesame::diff::compare_files;
 use samesame::discovery::{discover_files, generate_pairs};
 use samesame::error::SameError;
 use samesame::file::read_file_if_text;
 use samesame::output::{format_json, format_text};
-use samesame::types::{ComparisonResult, FileDescription};
+use samesame::types::{ComparisonResult, FileDescription, LineRange};
 
 fn main() -> ExitCode {
     let args = Args::parse_args();
@@ -28,6 +30,21 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// Remove `Same` runs whose first line doesn't match the regex,
+/// converting them to `Diff` runs so they are ignored by output formatting.
+fn filter_runs_by_regex(result: &mut ComparisonResult<'_>, regex: &Regex) {
+    result.runs.retain(|run| match run {
+        LineRange::Same { r1, .. } => {
+            if r1.start < result.f1.lines.len() {
+                regex.is_match(&result.f1.lines[r1.start])
+            } else {
+                false
+            }
+        }
+        LineRange::Diff { .. } => true,
+    });
 }
 
 fn run(args: &Args) -> Result<bool, SameError> {
@@ -79,10 +96,17 @@ fn run(args: &Args) -> Result<bool, SameError> {
     }
 
     // Compare pairs in parallel
-    let results: Vec<ComparisonResult<'_>> = pairs
+    let mut results: Vec<ComparisonResult<'_>> = pairs
         .par_iter()
         .map(|&(i, j)| compare_files(&files[i], &files[j]))
         .collect();
+
+    // Apply regex filter early to avoid processing filtered-out matches in formatting
+    if let Some(ref regex) = args.regex {
+        for result in &mut results {
+            filter_runs_by_regex(result, regex);
+        }
+    }
 
     // Check if any duplicates found
     let has_duplicates = results
@@ -97,7 +121,6 @@ fn run(args: &Args) -> Result<bool, SameError> {
             args.verbose,
             files.len(),
             pairs_count,
-            args.regex.as_ref(),
         ),
         OutputFormat::Json => format_json(
             &results,
@@ -105,7 +128,6 @@ fn run(args: &Args) -> Result<bool, SameError> {
             args.verbose,
             files.len(),
             pairs_count,
-            args.regex.as_ref(),
         ),
     };
 

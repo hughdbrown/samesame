@@ -241,6 +241,7 @@ pub fn find_unique_lines(hashes: &[u64]) -> HashMap<u64, usize> {
 }
 
 /// Find the longest increasing subsequence of indices in the second file.
+/// Uses an O(n log n) algorithm with binary search.
 #[doc(hidden)]
 pub fn longest_increasing_subsequence(matches: &[(usize, usize)]) -> Vec<(usize, usize)> {
     if matches.is_empty() {
@@ -248,31 +249,33 @@ pub fn longest_increasing_subsequence(matches: &[(usize, usize)]) -> Vec<(usize,
     }
 
     let n = matches.len();
-    let mut dp = vec![1usize; n];
+    // tails[i] holds the index into `matches` of the smallest tail element
+    // for an increasing subsequence of length i+1.
+    let mut tails: Vec<usize> = Vec::with_capacity(n);
+    // prev[i] holds the index of the predecessor of matches[i] in the LIS.
     let mut prev = vec![None::<usize>; n];
 
-    for i in 1..n {
-        for j in 0..i {
-            if matches[j].1 < matches[i].1 && dp[j] + 1 > dp[i] {
-                dp[i] = dp[j] + 1;
-                prev[i] = Some(j);
-            }
+    for i in 0..n {
+        let val = matches[i].1;
+
+        // Binary search for the leftmost position in tails where
+        // matches[tails[pos]].1 >= val
+        let pos = tails.partition_point(|&t| matches[t].1 < val);
+
+        if pos > 0 {
+            prev[i] = Some(tails[pos - 1]);
+        }
+
+        if pos == tails.len() {
+            tails.push(i);
+        } else {
+            tails[pos] = i;
         }
     }
 
-    // Find the end of the longest subsequence
-    let mut max_len = 0;
-    let mut max_idx = 0;
-    for (i, &len) in dp.iter().enumerate() {
-        if len > max_len {
-            max_len = len;
-            max_idx = i;
-        }
-    }
-
-    // Reconstruct the subsequence
-    let mut result = Vec::with_capacity(max_len);
-    let mut idx = Some(max_idx);
+    // Reconstruct the subsequence by following prev pointers from the last element
+    let mut result = Vec::with_capacity(tails.len());
+    let mut idx = Some(*tails.last().expect("tails is non-empty"));
     while let Some(i) = idx {
         result.push(matches[i]);
         idx = prev[i];
@@ -333,7 +336,8 @@ pub fn lcs_diff(hashes1: &[u64], hashes2: &[u64], offset1: usize, offset2: usize
     merge_runs(runs)
 }
 
-/// Compute LCS and return matching index pairs.
+/// Compute LCS and return matching index pairs using Hirschberg's algorithm.
+/// Uses O(min(m, n)) space instead of O(m * n).
 #[doc(hidden)]
 pub fn compute_lcs(hashes1: &[u64], hashes2: &[u64]) -> Vec<(usize, usize)> {
     let m = hashes1.len();
@@ -343,37 +347,89 @@ pub fn compute_lcs(hashes1: &[u64], hashes2: &[u64]) -> Vec<(usize, usize)> {
         return vec![];
     }
 
-    // Build DP table
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    hirschberg(hashes1, hashes2, 0, 0)
+}
 
-    for i in 1..=m {
+/// Compute the last row of the LCS DP table using O(n) space.
+/// Returns a vector where result[j] = LCS length of hashes1[..] and hashes2[..j].
+fn lcs_lengths(hashes1: &[u64], hashes2: &[u64]) -> Vec<usize> {
+    let n = hashes2.len();
+    let mut prev = vec![0usize; n + 1];
+    let mut curr = vec![0usize; n + 1];
+
+    for &h1 in hashes1 {
         for j in 1..=n {
-            if hashes1[i - 1] == hashes2[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
+            if h1 == hashes2[j - 1] {
+                curr[j] = prev[j - 1] + 1;
             } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+                curr[j] = prev[j].max(curr[j - 1]);
             }
         }
+        std::mem::swap(&mut prev, &mut curr);
+        curr.fill(0);
     }
 
-    // Backtrack to find the actual LCS
-    let mut result = Vec::new();
-    let mut i = m;
-    let mut j = n;
+    prev
+}
 
-    while i > 0 && j > 0 {
-        if hashes1[i - 1] == hashes2[j - 1] {
-            result.push((i - 1, j - 1));
-            i -= 1;
-            j -= 1;
-        } else if dp[i - 1][j] > dp[i][j - 1] {
-            i -= 1;
-        } else {
-            j -= 1;
+/// Hirschberg's divide-and-conquer LCS algorithm.
+/// offset1 and offset2 track the original indices for the returned pairs.
+fn hirschberg(
+    hashes1: &[u64],
+    hashes2: &[u64],
+    offset1: usize,
+    offset2: usize,
+) -> Vec<(usize, usize)> {
+    let m = hashes1.len();
+    let n = hashes2.len();
+
+    if m == 0 || n == 0 {
+        return vec![];
+    }
+
+    if m == 1 {
+        // Base case: single element in hashes1, find first match in hashes2
+        if let Some(j) = hashes2.iter().position(|&h| h == hashes1[0]) {
+            return vec![(offset1, offset2 + j)];
+        }
+        return vec![];
+    }
+
+    let mid = m / 2;
+
+    // Score forward: LCS lengths of hashes1[..mid] vs hashes2
+    let score_left = lcs_lengths(&hashes1[..mid], hashes2);
+
+    // Score backward: LCS lengths of reversed hashes1[mid..] vs reversed hashes2
+    let right1: Vec<u64> = hashes1[mid..].iter().rev().copied().collect();
+    let right2: Vec<u64> = hashes2.iter().rev().copied().collect();
+    let score_right = lcs_lengths(&right1, &right2);
+
+    // Find the split point in hashes2 that maximizes the combined LCS length
+    let mut best_k = 0;
+    let mut best_score = 0;
+    for k in 0..=n {
+        let score = score_left[k] + score_right[n - k];
+        if score > best_score {
+            best_score = score;
+            best_k = k;
         }
     }
 
-    result.reverse();
+    // Recurse on each half
+    let mut result = hirschberg(
+        &hashes1[..mid],
+        &hashes2[..best_k],
+        offset1,
+        offset2,
+    );
+    result.extend(hirschberg(
+        &hashes1[mid..],
+        &hashes2[best_k..],
+        offset1 + mid,
+        offset2 + best_k,
+    ));
+
     result
 }
 
