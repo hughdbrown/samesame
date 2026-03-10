@@ -7,5 +7,6 @@ pub mod error;
 pub mod file;
 pub mod grouping;
 pub mod output;
+pub mod rolling_hash;
 pub mod types;
 pub mod union_find;
