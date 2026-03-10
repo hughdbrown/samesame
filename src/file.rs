@@ -31,13 +31,11 @@ pub fn is_binary_file(path: &Path) -> Result<bool> {
 
 /// Hash a normalized line using BLAKE3.
 /// Returns the first 8 bytes of the hash as a u64.
-#[doc(hidden)]
 pub fn hash_line(line: &str) -> u64 {
     let hash = blake3::hash(line.as_bytes());
     let bytes = hash.as_bytes();
     u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ])
 }
 
@@ -75,18 +73,38 @@ pub fn read_file(path: &Path) -> Result<FileDescription> {
 /// Read a file, skipping if it's binary or empty.
 ///
 /// Returns None for binary files or empty files.
+/// Reads the file only once, checking for binary content in-memory.
 pub fn read_file_if_text(path: &Path) -> Result<Option<FileDescription>> {
-    // Check if binary
-    if is_binary_file(path)? {
+    let content = std::fs::read(path).map_err(|e| SameError::FileRead {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+
+    // Check for binary content (null bytes in first 8KB)
+    let check_len = content.len().min(BINARY_CHECK_SIZE);
+    if content[..check_len].contains(&0) {
         return Ok(None);
     }
 
-    let desc = read_file(path)?;
+    // Use lossy conversion for non-UTF-8 bytes
+    let text = String::from_utf8_lossy(&content);
+
+    let mut lines = Vec::new();
+    let mut hashes = Vec::new();
+
+    for line in text.lines() {
+        lines.push(line.to_string());
+        hashes.push(hash_line(line.trim()));
+    }
 
     // Skip empty files
-    if desc.is_empty() {
+    if lines.is_empty() {
         return Ok(None);
     }
 
-    Ok(Some(desc))
+    Ok(Some(FileDescription {
+        filename: path.to_path_buf(),
+        hashes,
+        lines,
+    }))
 }

@@ -1,15 +1,32 @@
 //! Output formatting for duplicate detection results.
 
+use std::fmt::Write;
+
 use serde::Serialize;
 
-use crate::grouping::{DuplicateGroup, GroupInfo, LocationInfo};
-use crate::types::ComparisonResult;
+use crate::rolling_hash::DuplicateGroup;
+
+/// Location within a duplicate group, for JSON output.
+#[derive(Serialize)]
+pub struct LocationInfo {
+    pub file: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A duplicate group for JSON output.
+#[derive(Serialize)]
+pub struct GroupInfo {
+    pub lines: usize,
+    pub locations: Vec<LocationInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<String>>,
+}
 
 /// Summary statistics for JSON output.
 #[derive(Serialize)]
 pub struct Summary {
     pub files_analyzed: usize,
-    pub pairs_compared: usize,
     pub duplicate_groups: usize,
     pub total_duplicate_lines: usize,
 }
@@ -23,13 +40,7 @@ pub struct JsonOutput {
 }
 
 /// Format results as human-readable text.
-pub fn format_text(
-    groups: &[DuplicateGroup],
-    results: &[ComparisonResult<'_>],
-    verbose: bool,
-    files_count: usize,
-    pairs_count: usize,
-) -> String {
+pub fn format_text(groups: &[DuplicateGroup], verbose: bool, files_count: usize) -> String {
     let mut output = String::new();
 
     if groups.is_empty() {
@@ -44,60 +55,41 @@ pub fn format_text(
     for group in groups {
         total_duplicate_lines += group.line_count;
 
-        output.push_str(&format!(
-            "{} lines duplicated across {} files:\n",
+        let _ = writeln!(
+            output,
+            "{} lines duplicated across {} files:",
             group.line_count,
             group.locations.len(),
-        ));
+        );
 
         for (path, start, end) in &group.locations {
-            output.push_str(&format!(
-                "  {}  lines {}-{}\n",
-                path.display(),
-                start + 1,
-                end,
-            ));
+            let _ = writeln!(output, "  {}  lines {}-{}", path.display(), start + 1, end);
         }
 
-        if verbose {
-            // Show the duplicated content once, from the first source
-            let result = &results[group.source_result_index];
-            let (file, r1_start) = {
-                // Use f1's lines from the source result
-                (&result.f1.lines, group.locations[0].1)
-            };
-            let r1_end = group.locations[0].2;
-
+        if verbose && let Some(ref content) = group.content {
+            let start_line = group.locations[0].1;
             output.push('\n');
-            for i in r1_start..r1_end {
-                if i < file.len() {
-                    output.push_str(&format!("  {:>4} | {}\n", i + 1, file[i]));
-                }
+            for (i, line) in content.iter().enumerate() {
+                let _ = writeln!(output, "  {:>4} | {}", start_line + i + 1, line);
             }
         }
 
         output.push_str("\n---\n\n");
     }
 
-    output.push_str(&format!(
-        "Summary: {} files analyzed, {} pairs compared, {} duplicate groups ({} lines)\n",
+    let _ = writeln!(
+        output,
+        "Summary: {} files analyzed, {} duplicate groups ({} lines)",
         files_count,
-        pairs_count,
         groups.len(),
         total_duplicate_lines,
-    ));
+    );
 
     output
 }
 
 /// Format results as JSON.
-pub fn format_json(
-    groups: &[DuplicateGroup],
-    results: &[ComparisonResult<'_>],
-    verbose: bool,
-    files_count: usize,
-    pairs_count: usize,
-) -> String {
+pub fn format_json(groups: &[DuplicateGroup], verbose: bool, files_count: usize) -> String {
     let mut total_duplicate_lines = 0usize;
 
     let duplicates: Vec<GroupInfo> = groups
@@ -115,13 +107,7 @@ pub fn format_json(
                 })
                 .collect();
 
-            let content = if verbose {
-                let result = &results[group.source_result_index];
-                let (start, end) = (group.locations[0].1, group.locations[0].2);
-                Some(result.f1.lines[start..end].to_vec())
-            } else {
-                None
-            };
+            let content = if verbose { group.content.clone() } else { None };
 
             GroupInfo {
                 lines: group.line_count,
@@ -135,12 +121,11 @@ pub fn format_json(
         version: env!("CARGO_PKG_VERSION").to_string(),
         summary: Summary {
             files_analyzed: files_count,
-            pairs_compared: pairs_count,
             duplicate_groups: duplicates.len(),
             total_duplicate_lines,
         },
         duplicates,
     };
 
-    serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&output).expect("JSON serialization of known types")
 }
