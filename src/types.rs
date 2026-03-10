@@ -15,7 +15,6 @@ pub struct FileDescription {
 
 impl FileDescription {
     /// Returns the number of lines in the file.
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.hashes.len()
     }

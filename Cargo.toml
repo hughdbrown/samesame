@@ -1,11 +1,11 @@
 [package]
 name = "samesame"
-version = "0.2.0"
+version = "1.1.1"
 edition = "2024"
 description = "A tool to identify repeated fragments of code across multiple files"
 license = "MIT"
 repository = "https://github.com/hughdbrown/samesame"
-keywords = ["duplicate", "code", "diff", "analysis"]
+keywords = ["duplicate", "code", "hash", "analysis"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
