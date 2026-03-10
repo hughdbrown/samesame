@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::types::FileDescription;
+
 /// Maps file paths to compact sequential numbers and back.
 ///
 /// File numbers are 0-based and assigned in registration order.
@@ -276,6 +278,50 @@ fn merge_consecutive_runs(
     }
 
     regions
+}
+
+/// Finds all duplicate code regions across the given files.
+///
+/// Orchestrates the full rolling hash pipeline:
+/// 1. Register files in the FileRegistry
+/// 2. Compute rolling hash blocks for each file
+/// 3. Group blocks by hash to find duplicates
+/// 4. Extract match pairs and merge consecutive runs
+/// 5. Consolidate pairwise regions into multi-file groups
+///
+/// Returns the file registry (for path lookups) and the duplicate groups.
+pub fn find_duplicates(
+    files: &[FileDescription],
+    min_match: usize,
+) -> (FileRegistry, Vec<DuplicateGroup>) {
+    let mut registry = FileRegistry::new();
+    let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+
+    for file in files {
+        let file_num: usize = registry.register(file.filename.clone());
+
+        if file.hashes.len() < min_match {
+            continue;
+        }
+
+        let blocks = compute_rolling_hashes(&file.hashes, file_num, min_match);
+        all_blocks.extend(blocks);
+    }
+
+    if all_blocks.is_empty() {
+        return (registry, Vec::new());
+    }
+
+    let groups = group_blocks(all_blocks);
+    if groups.is_empty() {
+        return (registry, Vec::new());
+    }
+
+    let pairs = extract_match_pairs(&groups);
+    let regions = merge_consecutive_runs(&pairs, min_match);
+    let duplicate_groups = consolidate_regions(regions, &registry);
+
+    (registry, duplicate_groups)
 }
 
 /// A location key: (file_num, start, end) identifying a specific code region.
@@ -591,6 +637,105 @@ mod tests {
         let reg = FileRegistry::new();
         let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
         assert!(dup_groups.is_empty());
+    }
+
+    fn make_file_desc(name: &str, hashes: Vec<u64>) -> FileDescription {
+        let lines: Vec<String> = hashes.iter().map(|h| format!("line_{h}")).collect();
+        FileDescription {
+            filename: PathBuf::from(name),
+            hashes,
+            lines,
+        }
+    }
+
+    #[test]
+    fn test_find_duplicates_basic() {
+        let f1 = make_file_desc("a.rs", vec![10, 20, 30, 40, 50]);
+        let f2 = make_file_desc("b.rs", vec![10, 20, 30, 40, 50]);
+        let files = vec![f1, f2];
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].line_count, 5);
+        assert_eq!(groups[0].locations.len(), 2);
+    }
+
+    #[test]
+    fn test_find_duplicates_extended() {
+        // 8 shared lines with min_match=5 → should merge into one group of 8
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50, 60, 70, 80];
+        let f1 = make_file_desc("a.rs", shared.clone());
+        let f2 = make_file_desc("b.rs", shared);
+        let files = vec![f1, f2];
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].line_count, 8);
+    }
+
+    #[test]
+    fn test_find_duplicates_no_match() {
+        let f1 = make_file_desc("a.rs", vec![1, 2, 3, 4, 5]);
+        let f2 = make_file_desc("b.rs", vec![6, 7, 8, 9, 10]);
+        let files = vec![f1, f2];
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_find_duplicates_below_threshold() {
+        // Only 3 shared lines, min_match is 5
+        // Use values where XOR of differing lines produces different block hashes
+        let f1 = make_file_desc("a.rs", vec![10, 20, 30, 100, 200]);
+        let f2 = make_file_desc("b.rs", vec![10, 20, 30, 300, 400]);
+        let files = vec![f1, f2];
+
+        // Verify the block hashes are actually different
+        let hash1: u64 = 10 ^ 20 ^ 30 ^ 100 ^ 200;
+        let hash2: u64 = 10 ^ 20 ^ 30 ^ 300 ^ 400;
+        assert_ne!(hash1, hash2, "Test setup: block hashes must differ");
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_find_duplicates_three_files() {
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let f1 = make_file_desc("a.rs", shared.clone());
+        let f2 = make_file_desc("b.rs", shared.clone());
+        let f3 = make_file_desc("c.rs", shared);
+        let files = vec![f1, f2, f3];
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].locations.len(), 3);
+    }
+
+    #[test]
+    fn test_find_duplicates_self_duplication() {
+        // Same block at two positions within one file
+        let f1 = make_file_desc("a.rs", vec![10, 20, 30, 40, 50, 99, 10, 20, 30, 40, 50]);
+        let files = vec![f1];
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert!(!groups.is_empty());
+        // Should have a group with 2 locations, both in a.rs
+        let group = &groups[0];
+        assert_eq!(group.locations.len(), 2);
+        assert_eq!(group.locations[0].0, PathBuf::from("a.rs"));
+        assert_eq!(group.locations[1].0, PathBuf::from("a.rs"));
+    }
+
+    #[test]
+    fn test_find_duplicates_short_file_skipped() {
+        let f1 = make_file_desc("a.rs", vec![10, 20, 30, 40, 50]);
+        let f2 = make_file_desc("short.rs", vec![10, 20]); // too short
+        let files = vec![f1, f2];
+
+        let (_reg, groups) = find_duplicates(&files, 5);
+        assert!(groups.is_empty());
     }
 
     #[test]
