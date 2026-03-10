@@ -106,20 +106,3 @@ pub fn deduplicate_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
     result
 }
-
-/// Generate all unique pairs of indices (i, j) where i < j.
-pub fn generate_pairs(count: usize) -> Vec<(usize, usize)> {
-    if count < 2 {
-        return Vec::new();
-    }
-
-    let mut pairs = Vec::with_capacity(count * (count - 1) / 2);
-
-    for i in 0..count {
-        for j in (i + 1)..count {
-            pairs.push((i, j));
-        }
-    }
-
-    pairs
-}
