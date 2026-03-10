@@ -1,0 +1,44 @@
+
+❯ Can you reconstruct the prompt I gave you for `hdb:design` that started this refactoring?
+
+⏺ I don't have the exact verbatim text — it was in the previous session that was compacted. But from the context summary, here's a
+  reconstruction of the substance:
+
+  ---
+  /hdb:design replace patience diff with rolling hash
+
+  The description covered:
+
+  1. Rolling hashes: Capture min_match consecutive line hashes XOR'd together — slide a window across each file's line hashes,
+  XOR-ing out the outgoing line and XOR-ing in the incoming line.
+  2. File numbering: Use a HashMap<String, usize> + Vec<String> to assign each file a compact sequential number.
+  3. Finding matched blocks: Store blocks in a HashMap<Hash, Vec<(file_num, start, end)>> — all blocks sharing a hash are potential
+  duplicates.
+  4. Identifying duplicates: Hash groups with 2+ entries are duplicated blocks.
+  5. Hand-waved parts (left to Claude to design):
+    - Extending matches beyond min_match — how to merge adjacent matching windows into longer regions
+    - Blank line handling — deferred
+ ---                                                                                                                                │
+│  The user also specified to work on the existing refactor-rolling-hash branch, commit early and often, and add tests for the        │
+│  algorithm. During design, I asked about XOR's order-independence (permuted lines hash identically), and the user chose "Use XOR    │
+│  anyway."                                                                                                                           │
+│                                                                                                                                     │
+│  If you need the exact original text, it might be in the transcript file at                                                         │
+│  /Users/hughbrown/.claude/projects/-Users-hughbrown-workspace-hughdbrown-rust-samesame/6cee8a86-aec0-4909-8bd3-97fa068a5035.jsonl.  │
+
+
+
+
+❯ Will the non-overlapping in the same file be enough on its own? Can we remove the matching first and last hash rule we added?
+
+⏺ They address different problems — I'd recommend keeping both.
+
+  The overlap filter only catches same-file matches where ranges overlap. It does nothing for:
+
+  1. Cross-file false positives — Two different files with brace-heavy sections could have the same XOR hash despite different actual
+   content (since XOR is order-independent). The first/last hash check eliminates many of these.
+  2. Same-file non-overlapping false positives — Two distant regions in the same file could have identical XOR hashes from different
+  line arrangements. The overlap filter wouldn't catch these since the ranges don't overlap, but first/last hash would.
+
+  The composite key improves hash discrimination in general. The overlap filter is a structural rule about what constitutes a valid
+  self-match. They're complementary.

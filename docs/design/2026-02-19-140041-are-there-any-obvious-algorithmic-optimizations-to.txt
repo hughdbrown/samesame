@@ -1,0 +1,193 @@
+
+    ✻
+    |
+   ▟█▙     Claude Code v2.1.47
+ ▐▛███▜▌   Opus 4.6 · Claude Max
+▝▜█████▛▘  ~/workspace/hughdbrown/rust/samesame
+  ▘▘ ▝▝  
+
+❯ Are there any obvious algorithmic optimizations to speed up this code? Is 
+   there an obvious way to not have to do `n (n-1)/2` file comparisons?     
+
+⏺ Good question. Let me look at the current comparison strategy to give a
+  concrete answer.
+
+⏺ Read 4 files (ctrl+o to expand)
+
+⏺ Here are the main algorithmic optimizations, from easiest to most ambitious:
+
+  1. Whole-file hash deduplication (trivial, eliminates exact duplicates)
+
+  If two files have identical content, you already have all the line hashes.
+  Just hash the entire file (or compare the hashes vectors directly) and group
+  identical files without running patience diff at all. This is O(n) instead of
+  O(n^2) for exact duplicates.
+
+  2. Inverted index pre-filtering (biggest practical win)
+
+  This is the most impactful optimization. Right now you compare every pair even
+   if two files share zero common lines. Instead:
+
+  1. After reading all files, build a HashMap<u64, Vec<usize>> mapping each line
+   hash to the file indices that contain it.
+  2. From that, derive which file pairs share any common line hashes.
+  3. Only compare pairs that share at least min_match common lines.
+
+  // Pseudocode
+  let mut line_to_files: HashMap<u64, HashSet<usize>> = HashMap::new();
+  for (file_idx, file) in files.iter().enumerate() {
+      for &hash in &file.hashes {
+          line_to_files.entry(hash).or_default().insert(file_idx);
+      }
+  }
+
+  // Count shared lines per pair
+  let mut pair_shared: HashMap<(usize, usize), usize> = HashMap::new();
+  for file_set in line_to_files.values() {
+      for &i in file_set {
+          for &j in file_set {
+              if i < j {
+                  *pair_shared.entry((i, j)).or_default() += 1;
+              }
+          }
+      }
+  }
+
+  // Only diff pairs with enough shared lines
+  let pairs: Vec<(usize, usize)> = pair_shared
+      .into_iter()
+      .filter(|&(_, count)| count >= min_match)
+      .map(|(pair, _)| pair)
+      .collect();
+
+  In a typical codebase with diverse files, this eliminates the vast majority of
+   comparisons. For example, if you're scanning 100 Rust files but only 8 of
+  them share any common lines, you go from 4,950 comparisons to ~28.
+
+  Important nuance: The inverted index approach counts shared line hashes, not
+  contiguous sequences. A pair could share min_match individual lines scattered
+  throughout without having any contiguous run of that length. So this is a
+  necessary condition filter, not sufficient - you still need the actual diff.
+  But it's a very effective heuristic.
+
+  3. File-size pre-filtering (cheap)
+
+  Two files can share at most min(len(f1), len(f2)) matching lines. If that's
+  less than min_match, skip the pair entirely. This is trivial:
+
+  if files[i].hashes.len().min(files[j].hashes.len()) < min_match {
+      continue;
+  }
+
+  4. N-gram shingling with min-hash (more complex, most scalable)
+
+  For very large codebases (thousands of files), build fixed-size "sketches" of
+  each file using min-hash over n-gram line-hash shingles. Then estimate Jaccard
+   similarity between all pairs in O(n) per pair using the sketches. Only run
+  the full diff on pairs above a similarity threshold.
+
+  This is the approach tools like moss and jplag (plagiarism detectors) use, and
+   it scales to tens of thousands of files. But it's significantly more complex
+  to implement and probably overkill unless you're routinely scanning 500+
+  files.
+
+  ---
+  My recommendation: Implement #2 (inverted index) and #3 (size filter)
+  together. They're straightforward, compose well, and for a typical project
+  scanning 50-200 files, they'll likely reduce the number of actual patience
+  diffs by 90%+. The inverted index replaces generate_pairs() entirely - instead
+   of generating all pairs and comparing them all, you only generate pairs that
+  have a chance of producing results.
+
+  Want me to implement this?
+
+✻ Crunched for 45s
+
+❯ 1. Files that are exact duplicates are very rare.                         
+  2. "Right now you compare every pair even if two files share zero common  
+  lines." This is also very rare without some processing. These are mostly  
+  code files, and each computer language has conventions that will likely   
+  cause hits.                                                               
+  - empty lines                                                             
+  - start of comment lines / end of comment lines                           
+  - licensing headers (many files get comment headers that assert ownership 
+   or copyright)                                                            
+  - loop idioms like `for (i = 0; i < j; i++)`                              
+  - lines with only { or } (like in C/C++/JavaScript/Rust)                  
+  Also, the processing done strips leading and trailing whitespace, leading 
+   to more hits.                                                            
+  3. The match done here is not optimal. You don't have to compare          
+  `min(len(f1), len(f2)) < match_len`. You can look at `len(f1) <           
+  match_len` and skip all comparisons if the file is too short. But this    
+  will be a rare case: It's uncommon for the file length in lines to be     
+  less than the match length. Most files are going to be longer.            
+
+⏺ You're right on all counts. The inverted index idea falls apart precisely
+  because code files share so many common lines - after trimming whitespace, },
+  {, empty lines, etc. mean nearly every file pair would pass the filter. The
+  pre-filtering approaches I suggested are essentially useless for real code.
+
+  The real answer requires changing the algorithmic paradigm entirely. Instead
+  of "compare all pairs of files," you want "find all shared contiguous
+  sequences directly."
+
+  Rolling hash over line-hash windows
+
+  What you actually care about is: contiguous sequences of min_match or more
+  identical lines appearing in 2+ files. You can find these directly without
+  pairwise comparison:
+
+  1. For each file, compute a rolling hash over sliding windows of min_match
+  consecutive line hashes
+  2. Build a HashMap<window_hash, Vec<(file_idx, start_line)>>
+  3. Any entry with 2+ different file indices is a candidate duplicate region
+  4. Extend matches beyond min_match by comparing additional line hashes forward
+
+  This is O(N) where N = total lines across all files, regardless of file count.
+   It doesn't matter that files share { or empty lines individually, because
+  you're matching contiguous sequences of min_match lines - it's extremely
+  unlikely that two unrelated files have the same 5+ contiguous lines by
+  coincidence.
+
+  The downside: this replaces the patience diff entirely. You'd lose the
+  interleaved Same/Diff output showing how two files relate to each other
+  overall. You'd only get "here are regions that are duplicated." Which might
+  actually be what you want for the use case of "find code to refactor," but
+  it's a different tool at that point.
+
+  Suffix array approach
+
+  Same idea, different data structure. Concatenate all files' line-hash
+  sequences with unique separator values. Build a suffix array + LCP array. All
+  duplicate regions of length >= min_match fall out directly from the LCP array.
+   Also O(N log N) or O(N) depending on construction algorithm.
+
+  This is the approach academic plagiarism/clone detectors use (e.g., the ideas
+  behind tools like CCFinder, Deckard).
+
+  ---
+  Both of these change the fundamental question from "how do these two files
+  differ?" to "where do any files share content?" - which is really what
+  duplicate detection is asking. The patience diff is a great algorithm for
+  producing a human-readable diff between two files, but it's solving a harder
+  problem than you need for clone detection.
+
+  Is that a direction you'd want to explore, or does the current pairwise
+  approach with the full diff output serve a purpose you want to keep?
+
+✻ Cogitated for 36s
+
+❯ /export 
+  ⎿  Failed to export conversation: ENOENT: no such file or directory, open
+     '/Users/hughbrown/workspace/hughdbrown/rust/samesame/~/2026-02-19-135855-ar
+     e-there-any-obvious-algorithmic-optimizations-to.txt'
+
+❯ /export 
+  ⎿  Failed to export conversation: ENOENT: no such file or directory, open
+     '/Users/hughbrown/workspace/hughdbrown/rust/samesame/Users/hughbrown/2026-0
+     2-19-135915-are-there-any-obvious-algorithmic-optimizations-to.txt'
+
+❯ /export 
+  ⎿  Failed to export conversation: ENOENT: no such file or directory, open
+     '/Users/hughbrown/workspace/hughdbrown/rust/samesame/docs/design/2026-02-19
+     -135957-are-there-any-obvious-algorithmic-optimizations-to.txt'
