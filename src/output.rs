@@ -1,5 +1,7 @@
 //! Output formatting for duplicate detection results.
 
+use std::fmt::Write;
+
 use serde::Serialize;
 
 use crate::rolling_hash::DuplicateGroup;
@@ -53,38 +55,35 @@ pub fn format_text(groups: &[DuplicateGroup], verbose: bool, files_count: usize)
     for group in groups {
         total_duplicate_lines += group.line_count;
 
-        output.push_str(&format!(
-            "{} lines duplicated across {} files:\n",
+        let _ = writeln!(
+            output,
+            "{} lines duplicated across {} files:",
             group.line_count,
             group.locations.len(),
-        ));
+        );
 
         for (path, start, end) in &group.locations {
-            output.push_str(&format!(
-                "  {}  lines {}-{}\n",
-                path.display(),
-                start + 1,
-                end,
-            ));
+            let _ = writeln!(output, "  {}  lines {}-{}", path.display(), start + 1, end);
         }
 
         if verbose && let Some(ref content) = group.content {
             let start_line = group.locations[0].1;
             output.push('\n');
             for (i, line) in content.iter().enumerate() {
-                output.push_str(&format!("  {:>4} | {}\n", start_line + i + 1, line));
+                let _ = writeln!(output, "  {:>4} | {}", start_line + i + 1, line);
             }
         }
 
         output.push_str("\n---\n\n");
     }
 
-    output.push_str(&format!(
-        "Summary: {} files analyzed, {} duplicate groups ({} lines)\n",
+    let _ = writeln!(
+        output,
+        "Summary: {} files analyzed, {} duplicate groups ({} lines)",
         files_count,
         groups.len(),
         total_duplicate_lines,
-    ));
+    );
 
     output
 }
@@ -128,5 +127,5 @@ pub fn format_json(groups: &[DuplicateGroup], verbose: bool, files_count: usize)
         duplicates,
     };
 
-    serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&output).expect("JSON serialization of known types")
 }
