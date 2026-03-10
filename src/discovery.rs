@@ -46,7 +46,6 @@ pub fn discover_files(
 }
 
 /// Scan using a glob pattern.
-#[doc(hidden)]
 pub fn scan_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     let entries = glob(pattern).map_err(|e| SameError::InvalidGlob {
         pattern: pattern.to_string(),
@@ -74,7 +73,6 @@ pub fn scan_glob(pattern: &str) -> Result<Vec<PathBuf>> {
 }
 
 /// Check if a path is a symlink.
-#[doc(hidden)]
 pub fn is_symlink(path: &Path) -> bool {
     path.symlink_metadata()
         .map(|m| m.file_type().is_symlink())
@@ -82,7 +80,6 @@ pub fn is_symlink(path: &Path) -> bool {
 }
 
 /// Check if a path is hidden (starts with .).
-#[doc(hidden)]
 pub fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -91,7 +88,6 @@ pub fn is_hidden(path: &Path) -> bool {
 }
 
 /// Remove duplicate paths, keeping first occurrence.
-#[doc(hidden)]
 pub fn deduplicate_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::with_capacity(paths.len());

@@ -36,7 +36,6 @@ fn filter_groups_by_regex(
     groups: &mut Vec<DuplicateGroup>,
     regex: &regex::Regex,
     files: &[FileDescription],
-    registry: &samesame::rolling_hash::FileRegistry,
 ) {
     groups.retain(|group| {
         if let Some((path, start, _end)) = group.locations.first() {
@@ -46,8 +45,6 @@ fn filter_groups_by_regex(
                     return regex.is_match(&file.lines[*start]);
                 }
             }
-            // If file not found (shouldn't happen), keep the group
-            let _ = (registry, path); // suppress unused warning
             true
         } else {
             false
@@ -60,10 +57,8 @@ fn populate_content(groups: &mut [DuplicateGroup], files: &[FileDescription]) {
     for group in groups.iter_mut() {
         if let Some((path, start, end)) = group.locations.first() {
             for file in files {
-                if &file.filename == path {
-                    if *end <= file.lines.len() {
-                        group.content = Some(file.lines[*start..*end].to_vec());
-                    }
+                if &file.filename == path && *end <= file.lines.len() {
+                    group.content = Some(file.lines[*start..*end].to_vec());
                     break;
                 }
             }
@@ -108,7 +103,7 @@ fn run(args: &Args) -> Result<bool, SameError> {
     }
 
     // Find duplicates using rolling hash
-    let (registry, mut groups) = find_duplicates(&files, args.min_match);
+    let (_registry, mut groups) = find_duplicates(&files, args.min_match);
 
     if !args.quiet {
         eprintln!("Found {} duplicate groups", groups.len());
@@ -116,7 +111,7 @@ fn run(args: &Args) -> Result<bool, SameError> {
 
     // Apply regex filter
     if let Some(ref regex) = args.regex {
-        filter_groups_by_regex(&mut groups, regex, &files, &registry);
+        filter_groups_by_regex(&mut groups, regex, &files);
     }
 
     // Populate content for verbose output

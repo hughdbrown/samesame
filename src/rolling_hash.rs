@@ -1,8 +1,12 @@
 //! Rolling hash duplicate detection algorithm.
 //!
-//! Replaces patience diff + union-find with a rolling XOR hash approach.
-//! Computes rolling hash fingerprints over windows of `min_match` consecutive
+//! Computes rolling XOR hash fingerprints over windows of `min_match` consecutive
 //! lines and uses a hash table for O(1) duplicate block lookup.
+//!
+//! **Note:** XOR is order-independent, so permutations of the same set of line
+//! hashes produce the same rolling hash. This can yield false positives (lines
+//! `{A, B, C}` and `{C, B, A}` hash identically) but never false negatives.
+//! In practice, false positives are rare for real code.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -63,22 +67,22 @@ impl FileRegistry {
 
 /// A rolling hash block descriptor identifying a window of consecutive lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockDescriptor {
+pub(crate) struct BlockDescriptor {
     /// XOR of per-line hashes for this window.
-    pub hash: u64,
+    pub(crate) hash: u64,
     /// File number from the FileRegistry.
-    pub file_num: usize,
+    pub(crate) file_num: usize,
     /// Starting line index (0-based, inclusive).
-    pub start: usize,
+    pub(crate) start: usize,
     /// Ending line index (0-based, exclusive).
-    pub end: usize,
+    pub(crate) end: usize,
 }
 
 /// Computes rolling XOR hash blocks over a sliding window of `min_match` lines.
 ///
 /// Returns one `BlockDescriptor` per window position. If the file has fewer
 /// than `min_match` lines, returns an empty Vec.
-pub fn compute_rolling_hashes(
+pub(crate) fn compute_rolling_hashes(
     hashes: &[u64],
     file_num: usize,
     min_match: usize,
@@ -135,7 +139,7 @@ pub struct DuplicateGroup {
 ///
 /// Returns a map from block hash to the list of block descriptors sharing
 /// that hash. Single-entry groups (no duplicates) are filtered out.
-pub fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<BlockDescriptor>> {
+pub(crate) fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<BlockDescriptor>> {
     let mut groups: HashMap<u64, Vec<BlockDescriptor>> = HashMap::new();
     for block in blocks {
         groups.entry(block.hash).or_default().push(block);
@@ -150,7 +154,8 @@ pub fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<BlockDescr
 /// Each hash group with 2+ entries becomes one `DuplicateGroup` with
 /// `min_match` lines. Groups are sorted by line count descending, then
 /// by first location for deterministic output.
-pub fn blocks_to_duplicate_groups(
+#[cfg(test)]
+pub(crate) fn blocks_to_duplicate_groups(
     groups: &HashMap<u64, Vec<BlockDescriptor>>,
     registry: &FileRegistry,
     min_match: usize,
@@ -301,6 +306,9 @@ fn merge_consecutive_runs(
 /// 5. Consolidate pairwise regions into multi-file groups
 ///
 /// Returns the file registry (for path lookups) and the duplicate groups.
+///
+/// Note: This runs single-threaded. For very large codebases, steps 1-2
+/// could be parallelized per-file with rayon, though I/O dominates in practice.
 pub fn find_duplicates(
     files: &[FileDescription],
     min_match: usize,
@@ -366,12 +374,13 @@ fn consolidate_regions(regions: Vec<MergedRegion>, registry: &FileRegistry) -> V
     let n: usize = regions.len();
     let mut parent: Vec<usize> = (0..n).collect();
 
-    // Find with path compression
-    fn find(parent: &mut [usize], x: usize) -> usize {
-        if parent[x] != x {
-            parent[x] = find(parent, parent[x]);
+    // Iterative find with path compression
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]]; // path splitting
+            x = parent[x];
         }
-        parent[x]
+        x
     }
 
     // Union regions that share a location
