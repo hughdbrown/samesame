@@ -168,6 +168,48 @@ pub fn blocks_to_duplicate_groups(
     result
 }
 
+/// Key identifying a pair of files at a particular alignment offset.
+/// `file_a < file_b` for cross-file pairs, `file_a == file_b` for self-duplication.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MatchPairKey {
+    file_a: usize,
+    file_b: usize,
+    offset: isize,
+}
+
+/// Extracts match pairs from hash groups, grouped by (file_a, file_b, offset).
+///
+/// For each hash group with 2+ entries, generates all pairs of matching
+/// locations. Each pair is keyed by the two file numbers and their relative
+/// offset (start_b - start_a). The value is a list of start positions in file_a.
+fn extract_match_pairs(
+    groups: &HashMap<u64, Vec<BlockDescriptor>>,
+) -> HashMap<MatchPairKey, Vec<usize>> {
+    let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+
+    for blocks in groups.values() {
+        for i in 0..blocks.len() {
+            for j in (i + 1)..blocks.len() {
+                let (a, b) = if blocks[i].file_num <= blocks[j].file_num {
+                    (&blocks[i], &blocks[j])
+                } else {
+                    (&blocks[j], &blocks[i])
+                };
+
+                let key = MatchPairKey {
+                    file_a: a.file_num,
+                    file_b: b.file_num,
+                    offset: b.start as isize - a.start as isize,
+                };
+
+                pairs.entry(key).or_default().push(a.start);
+            }
+        }
+    }
+
+    pairs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +416,56 @@ mod tests {
         let reg = FileRegistry::new();
         let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
         assert!(dup_groups.is_empty());
+    }
+
+    #[test]
+    fn test_extract_match_pairs_two_files() {
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&shared, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 1, 5));
+
+        let groups = group_blocks(all_blocks);
+        let pairs = extract_match_pairs(&groups);
+
+        // One pair: (file 0, file 1, offset 0), with start position [0]
+        assert_eq!(pairs.len(), 1);
+        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        assert!(pairs.contains_key(&key));
+        assert_eq!(pairs[&key], vec![0]);
+    }
+
+    #[test]
+    fn test_extract_match_pairs_three_files() {
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&shared, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 1, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 2, 5));
+
+        let groups = group_blocks(all_blocks);
+        let pairs = extract_match_pairs(&groups);
+
+        // Three pairs: (0,1), (0,2), (1,2)
+        assert_eq!(pairs.len(), 3);
+        assert!(pairs.contains_key(&MatchPairKey { file_a: 0, file_b: 1, offset: 0 }));
+        assert!(pairs.contains_key(&MatchPairKey { file_a: 0, file_b: 2, offset: 0 }));
+        assert!(pairs.contains_key(&MatchPairKey { file_a: 1, file_b: 2, offset: 0 }));
+    }
+
+    #[test]
+    fn test_extract_match_pairs_same_file() {
+        // Self-duplication: same block at positions 0 and 6 in the same file
+        let hashes: Vec<u64> = vec![10, 20, 30, 40, 50, 99, 10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&hashes, 0, 5));
+
+        let groups = group_blocks(all_blocks);
+        let pairs = extract_match_pairs(&groups);
+
+        // Should have a self-pair with file_a == file_b == 0
+        let self_pair = pairs.keys().find(|k| k.file_a == 0 && k.file_b == 0);
+        assert!(self_pair.is_some());
     }
 
     #[test]
